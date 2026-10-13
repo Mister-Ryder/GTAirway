@@ -18,10 +18,6 @@ results/
 runs/
 runs_*/
 visualization_outputs/
-heterogeneity_csv_outputs/
-统计可视化/
-analysis/dataset_info*/
-analysis/report_image/
 *.dcm
 *.nii
 *.nii.gz
@@ -38,3 +34,5 @@ analysis/report_image/
 *.obj
 *.xlsx
 *.xls
+*.pdf
+*.docx

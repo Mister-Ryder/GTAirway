@@ -51,7 +51,10 @@ class Normalization_np(object):
 def semantic_segment_crop_and_cat(raw_img, model, device, crop_cube_size=256, stride=256, windowMin=-1000, windowMax=600):
     
     normalization=Normalization_np(windowMin, windowMax)
+
+    # [raw_img, raw_label, raw_sk, raw_dis, raw_ga] = raw_img # raw_img is a list
     raw_img = normalization(raw_img)
+
     
     # raw_img: 3d matrix, numpy.array
     assert isinstance(crop_cube_size, (int, list))
@@ -121,7 +124,7 @@ def semantic_segment_crop_and_cat(raw_img, model, device, crop_cube_size=256, st
                 raw_img_crop=from_numpy(raw_img_crop).float().to(device)
                 
                 with torch.no_grad():
-                    seg_crop_output=model(raw_img_crop)
+                    _,_,seg_crop_output=model(raw_img_crop)
                 seg_crop_output_np=seg_crop_output[:,1,:,:,:].cpu().detach().numpy()
                 seg_crop_output_np = seg_crop_output_np[0,:,:,:]
                 

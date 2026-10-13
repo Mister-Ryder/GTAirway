@@ -12,7 +12,7 @@ from func.model_arch import SegAirwayModel
 import numpy as np
 import torch
 import os
-#import h5py
+import h5py
 import shutil
 import time
 import torch

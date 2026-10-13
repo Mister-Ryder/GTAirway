@@ -5,6 +5,7 @@ import torch
 import numpy as np
 from functools import partial
 
+
 def create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding, stride, dilation=1):
     """
     Create a list of modules with together constitute a single conv layer with non-linearity
@@ -38,7 +39,9 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
         elif char == 'c':
             # add learnable bias only in the absence of batchnorm/groupnorm
             bias = not ('g' in order or 'b' in order)
-            modules.append(('conv', nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, stride=stride, dilation=dilation)))
+            modules.append(('conv',
+                            nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding, bias=bias, stride=stride,
+                                      dilation=dilation)))
         elif char == 'g':
             is_before_conv = i < order.index('c')
             if is_before_conv:
@@ -81,11 +84,14 @@ class SingleConv(nn.Sequential):
         padding (int or tuple):
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='gcr', num_groups=8, padding=1, stride=1, dilation=1):
+    def __init__(self, in_channels, out_channels, kernel_size=3, order='gcr', num_groups=8, padding=1, stride=1,
+                 dilation=1):
         super(SingleConv, self).__init__()
 
-        for name, module in create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding=padding, stride=stride, dilation=dilation):
+        for name, module in create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding=padding,
+                                        stride=stride, dilation=dilation):
             self.add_module(name, module)
+
 
 class AttModule(nn.Module):
     def __init__(self, channel, mid_channel=8):
@@ -102,23 +108,24 @@ class AttModule(nn.Module):
         y = self.avg_pool(x).view(b, c)
         y = self.fc(y).view(b, c, 1, 1, 1)
         return x * y.expand_as(x)
-            
+
+
 class Encoder(nn.Module):
     """
-    A single encoder module consisting of 
-    
+    A single encoder module consisting of
+
     (1) two consecutive convolution layers (e.g. BatchNorm3d+ReLU+Conv3d).
     We use (Conv3d+ReLU+GroupNorm3d) by default.
     This can be changed however by providing the 'order' argument, e.g. in order
     to change to Conv3d+BatchNorm3d+ELU use order='cbe'.
     Use padded convolutions to make sure that the output (H_out, W_out) is the same
     as (H_in, W_in), so that you don't have to crop in the decoder path.
-    
+
     (2) the pooling layer (one may specify the MaxPool kernel_size to be different
     than the standard (2,2,2), e.g. if the volumetric data is anisotropic
     (make sure to use complementary scale_factor in the decoder path) followed by
     a DoubleConv module.
-    
+
     Args:
         in_channels (int): number of input channels
         middle_channels (int): number of middle channels
@@ -135,7 +142,9 @@ class Encoder(nn.Module):
         num_groups (int): number of groups for the GroupNorm
         padding (int or tuple): add zero-padding added to all three sides of the input
     """
-    def __init__(self, in_channels, middle_channels, out_channels, apply_pooling=True, conv_kernel_size=3, pool_kernel_size=2, pool_type='max', conv_layer_order='gcr', num_groups=8, padding=1, stride=1):
+
+    def __init__(self, in_channels, middle_channels, out_channels, apply_pooling=True, conv_kernel_size=3,
+                 pool_kernel_size=2, pool_type='max', conv_layer_order='gcr', num_groups=8, padding=1, stride=1):
         super(Encoder, self).__init__()
         assert pool_type in ['max', 'avg']
         if apply_pooling:
@@ -145,24 +154,28 @@ class Encoder(nn.Module):
                 self.pooling = nn.AvgPool3d(kernel_size=pool_kernel_size)
         else:
             self.pooling = None
-        
+
         # conv1
-        self.conv1 = SingleConv(in_channels, middle_channels, conv_kernel_size, conv_layer_order, num_groups, padding=padding, stride=stride)
+        self.conv1 = SingleConv(in_channels, middle_channels, conv_kernel_size, conv_layer_order, num_groups,
+                                padding=padding, stride=stride)
         # conv2
-        self.conv2 = SingleConv(middle_channels, out_channels, conv_kernel_size, conv_layer_order, num_groups, padding=padding, stride=stride)
-        
+        self.conv2 = SingleConv(middle_channels, out_channels, conv_kernel_size, conv_layer_order, num_groups,
+                                padding=padding, stride=stride)
+
         #
-        self.dilation_conv = SingleConv(middle_channels, middle_channels, (3,3,3), conv_layer_order, num_groups, padding=(4,4,4), stride=stride, dilation=4)
+        self.dilation_conv = SingleConv(middle_channels, middle_channels, (3, 3, 3), conv_layer_order, num_groups,
+                                        padding=(4, 4, 4), stride=stride, dilation=4)
         self.att = AttModule(channel=middle_channels)
-        
+
     def forward(self, x):
         if self.pooling is not None:
             x = self.pooling(x)
         x = self.conv1(x)
-        x = x+self.att(self.dilation_conv(x))
+        x = x + self.att(self.dilation_conv(x))
         x = self.conv2(x)
-        
+
         return x
+
 
 class Decoder(nn.Module):
     """
@@ -181,34 +194,40 @@ class Decoder(nn.Module):
             in `DoubleConv` module. See `DoubleConv` for more info.
         num_groups (int): number of groups for the GroupNorm
         padding (int or tuple): add zero-padding added to all three sides of the input
-        is_deconv (bool): 
+        is_deconv (bool):
     """
 
-    def __init__(self, in_channels, upsample_out_channels, conv_in_channels, conv_middle_channels, out_channels, conv_kernel_size=3, conv_layer_order='gcr', num_groups=8, conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2), deconv_padding=1):
+    def __init__(self, in_channels, upsample_out_channels, conv_in_channels, conv_middle_channels, out_channels,
+                 conv_kernel_size=3, conv_layer_order='gcr', num_groups=8, conv_padding=1, conv_stride=1,
+                 deconv_kernel_size=4, deconv_stride=(2, 2, 2), deconv_padding=1):
         super(Decoder, self).__init__()
         # deconv
-        self.upsample = nn.ConvTranspose3d(in_channels, upsample_out_channels, kernel_size=deconv_kernel_size, stride=deconv_stride, padding=deconv_padding)
-        
+        self.upsample = nn.ConvTranspose3d(in_channels, upsample_out_channels, kernel_size=deconv_kernel_size,
+                                           stride=deconv_stride, padding=deconv_padding)
+
         # concat joining
         self.joining = partial(self._joining, concat=True)
-        
+
         # conv1
-        self.conv1 = SingleConv(conv_in_channels, conv_middle_channels, conv_kernel_size, conv_layer_order, num_groups, padding=conv_padding, stride=conv_stride)
+        self.conv1 = SingleConv(conv_in_channels, conv_middle_channels, conv_kernel_size, conv_layer_order, num_groups,
+                                padding=conv_padding, stride=conv_stride)
         # conv2
-        self.conv2 = SingleConv(conv_middle_channels, out_channels, conv_kernel_size, conv_layer_order, num_groups, padding=conv_padding, stride=conv_stride)
-        
+        self.conv2 = SingleConv(conv_middle_channels, out_channels, conv_kernel_size, conv_layer_order, num_groups,
+                                padding=conv_padding, stride=conv_stride)
+
         #
-        self.dilation_conv = SingleConv(conv_middle_channels, conv_middle_channels, (3,3,3), conv_layer_order, num_groups, padding=(4,4,4), stride=conv_stride, dilation=4)
+        self.dilation_conv = SingleConv(conv_middle_channels, conv_middle_channels, (3, 3, 3), conv_layer_order,
+                                        num_groups, padding=(4, 4, 4), stride=conv_stride, dilation=4)
         self.att = AttModule(channel=conv_middle_channels)
 
     def forward(self, encoder_features, x):
         x = self.upsample(x)
         x = self.joining(encoder_features, x)
-        
+
         x = self.conv1(x)
-        x = x+self.att(self.dilation_conv(x))
+        x = x + self.att(self.dilation_conv(x))
         x = self.conv2(x)
-        
+
         return x
 
     @staticmethod
@@ -217,6 +236,7 @@ class Decoder(nn.Module):
             return torch.cat((encoder_features, x), dim=1)
         else:
             return encoder_features + x
+
 
 class SegAirwayModel(nn.Module):
     """
@@ -237,24 +257,58 @@ class SegAirwayModel(nn.Module):
         super(SegAirwayModel, self).__init__()
 
         # create encoder
-        encoder_1 = Encoder(in_channels=in_channels, middle_channels=16, out_channels=32, apply_pooling=False, conv_kernel_size=3, pool_kernel_size=2, pool_type='max', conv_layer_order=layer_order, num_groups=8, padding=1, stride=1)
-        encoder_2 = Encoder(in_channels=32, middle_channels=32, out_channels=64, apply_pooling=True, conv_kernel_size=3, pool_kernel_size=2, pool_type='max', conv_layer_order=layer_order, num_groups=8, padding=1, stride=1)
-        encoder_3 = Encoder(in_channels=64, middle_channels=64, out_channels=128, apply_pooling=True, conv_kernel_size=3, pool_kernel_size=2, pool_type='max', conv_layer_order=layer_order, num_groups=8, padding=1, stride=1)
-        encoder_4 = Encoder(in_channels=128, middle_channels=128, out_channels=256, apply_pooling=True, conv_kernel_size=3, pool_kernel_size=2, pool_type='max', conv_layer_order=layer_order, num_groups=8, padding=1, stride=1)
+        encoder_1 = Encoder(in_channels=in_channels, middle_channels=16, out_channels=32, apply_pooling=False,
+                            conv_kernel_size=3, pool_kernel_size=2, pool_type='max', conv_layer_order=layer_order,
+                            num_groups=8, padding=1, stride=1)
+        encoder_2 = Encoder(in_channels=32, middle_channels=32, out_channels=64, apply_pooling=True, conv_kernel_size=3,
+                            pool_kernel_size=2, pool_type='max', conv_layer_order=layer_order, num_groups=8, padding=1,
+                            stride=1)
+        encoder_3 = Encoder(in_channels=64, middle_channels=64, out_channels=128, apply_pooling=True,
+                            conv_kernel_size=3, pool_kernel_size=2, pool_type='max', conv_layer_order=layer_order,
+                            num_groups=8, padding=1, stride=1)
+        encoder_4 = Encoder(in_channels=128, middle_channels=128, out_channels=256, apply_pooling=True,
+                            conv_kernel_size=3, pool_kernel_size=2, pool_type='max', conv_layer_order=layer_order,
+                            num_groups=8, padding=1, stride=1)
 
         self.encoders = nn.ModuleList([encoder_1, encoder_2, encoder_3, encoder_4])
 
         # create decoder
-        decoder_1 = Decoder(in_channels=256, upsample_out_channels=256, conv_in_channels=384, conv_middle_channels=128, out_channels=128, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8, conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2), deconv_padding=1)
-        decoder_2 = Decoder(in_channels=128, upsample_out_channels=128, conv_in_channels=192, conv_middle_channels=64, out_channels=64, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8, conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2), deconv_padding=1)
-        decoder_3 = Decoder(in_channels=64, upsample_out_channels=64, conv_in_channels=96, conv_middle_channels=32, out_channels=32, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8, conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2), deconv_padding=1)
+        decoder_1 = Decoder(in_channels=256, upsample_out_channels=256, conv_in_channels=384, conv_middle_channels=128,
+                            out_channels=128, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8,
+                            conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2),
+                            deconv_padding=1)
+        decoder_2 = Decoder(in_channels=128, upsample_out_channels=128, conv_in_channels=192, conv_middle_channels=64,
+                            out_channels=64, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8,
+                            conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2),
+                            deconv_padding=1)
+        decoder_3 = Decoder(in_channels=64, upsample_out_channels=64, conv_in_channels=96, conv_middle_channels=32,
+                            out_channels=32, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8,
+                            conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2),
+                            deconv_padding=1)
+
+        decoder_4 = Decoder(in_channels=256, upsample_out_channels=256, conv_in_channels=384, conv_middle_channels=128,
+                            out_channels=128, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8,
+                            conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2),
+                            deconv_padding=1)
+        decoder_5 = Decoder(in_channels=128, upsample_out_channels=128, conv_in_channels=192, conv_middle_channels=64,
+                            out_channels=64, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8,
+                            conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2),
+                            deconv_padding=1)
+        decoder_6 = Decoder(in_channels=64, upsample_out_channels=64, conv_in_channels=96, conv_middle_channels=32,
+                            out_channels=32, conv_kernel_size=3, conv_layer_order=layer_order, num_groups=8,
+                            conv_padding=1, conv_stride=1, deconv_kernel_size=4, deconv_stride=(2, 2, 2),
+                            deconv_padding=1)
 
         self.decoders = nn.ModuleList([decoder_1, decoder_2, decoder_3])
+        self.decoders_skeleton = nn.ModuleList([decoder_4, decoder_5, decoder_6])
+        #self.decoders_gaussian = nn.ModuleList([decoder_4, decoder_5, decoder_6])
 
         # in the last layer a 1×1 convolution reduces the number of output
         # channels to the number of labels
         self.final_conv = nn.Conv3d(in_channels=32, out_channels=out_channels, kernel_size=3, padding=1, stride=1)
-        
+        self.final_conv_skl = nn.Conv3d(in_channels=32, out_channels=1, kernel_size=3, padding=1, stride=1)
+        #self.final_conv_gau = nn.Conv3d(in_channels=32, out_channels=1, kernel_size=3, padding=1, stride=1)
+
         self.final_activation = nn.Softmax(dim=1)
 
     def forward(self, x):
@@ -269,14 +323,21 @@ class SegAirwayModel(nn.Module):
         # !!remember: it's the 1st in the list
         encoders_features = encoders_features[1:]
 
+        skl = x.clone().detach()
+        #gau = x.clone().detach()
+
         # decoder part
-        for decoder, encoder_features in zip(self.decoders, encoders_features):
+        for decoder, decoder_skl, encoder_features in zip(self.decoders, self.decoders_skeleton,
+                                                                       encoders_features):
             # pass the output from the corresponding encoder and the output
             # of the previous decoder
             x = decoder(encoder_features, x)
+            skl = decoder_skl(encoder_features, skl)
 
         x = self.final_conv(x)
+        skl = self.final_conv_skl(skl)
 
         x = self.final_activation(x)
+        skl = self.final_activation(skl)
 
-        return x
+        return x, skl

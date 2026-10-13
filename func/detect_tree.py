@@ -1,15 +1,32 @@
-# tree detection V3
+# tree detection
+# -*- coding: utf-8 -*-
+# @Time    : 2024/2 21:27
+# @Author  : JIA
+# @FileName: first_skeleton.py
+# @Software: PyCharm
+# @Blog    ：
 import numpy as np
 from skimage.morphology import skeletonize_3d
 from skimage.measure import label as label_regions
+import sys
+sys.setrecursionlimit(3000)  # 设置更高的递归深度限制
+
 
 def tree_detection(seg_onehot, search_range = 2, need_skeletonize_3d=True):
+    """
+    执行四个步骤：
+    一、get_the_skeleton_and_center_nearby_dict：得到骨架和中心点附近的点坐标
+    二、get_connection_dict：得到连接dict字典，包含keys "gneration", "loc", "before", "next", "is_bifurcation", "number_of_next", "is_processed"
+    三、get_number_of_branch：得到分叉数
+    四、get_tree_length：得到树的长度
+    """
     center_map, center_dict, nearby_dict = get_the_skeleton_and_center_nearby_dict(seg_onehot, search_range=search_range, need_skeletonize_3d=need_skeletonize_3d)
-    connection_dict = get_connection_dict(center_dict, nearby_dict)
+    connection_dict, interaction_points= get_connection_dict(center_dict, nearby_dict)
+    interaction_points["shape"]=center_map.shape
     number_of_branch = get_number_of_branch(connection_dict)
     tree_length = get_tree_length(connection_dict, is_3d_len=True)
     
-    return center_map, connection_dict, number_of_branch, tree_length
+    return center_map, connection_dict, number_of_branch, tree_length, interaction_points
 
 def get_crop(input_3d_img, search_center, search_range=1):
     shape_of_input_3d_img = input_3d_img.shape
@@ -43,13 +60,16 @@ def get_the_skeleton_and_center_nearby_dict(seg_input, search_range = 10, need_s
     
     center_locs = np.where(center_map>0)
     base_count = 1
+
     for i in range(len(center_locs[0])):
         center_dict[i+base_count]=[center_locs[0][i],center_locs[1][i],center_locs[2][i]]
+        #print(center_map[center_locs[0][i],center_locs[1][i],center_locs[2][i]])
         center_map[center_locs[0][i],center_locs[1][i],center_locs[2][i]] = i+base_count
+        #print(center_map[center_locs[0][i],center_locs[1][i],center_locs[2][i]])
     
     for i in center_dict.keys():
         center_map_crop = get_crop(center_map, center_dict[i], search_range)
-        crop_img_vals = np.unique(center_map_crop).astype(np.int)
+        crop_img_vals = np.unique(center_map_crop).astype(np.int) # unique values in the crop_img
         crop_img_vals = crop_img_vals[crop_img_vals!=0]
         crop_img_vals = crop_img_vals[crop_img_vals!=i]
         nearby_dict[i] = crop_img_vals
@@ -58,33 +78,50 @@ def get_the_skeleton_and_center_nearby_dict(seg_input, search_range = 10, need_s
 
 # step 2 get_connection_dict
 def get_connection_dict(center_dict, nearby_dict):
+    """
+    get the connection dict of the centerline, which is a dict that contains keys "gneration", "loc", "before", "next", "is_bifurcation", "number_of_next", "is_processed"
+    """
+
     slice_idxs = list(center_dict.keys())
     slice_idxs.reverse()
-    
+    #在下面那个循环中，将center_dict的每个list添加到interaction_points中
+    interaction_points={}
+    interaction_points["shape"] = []
+    interaction_points["loc"]=[]
+
     # init connection dict
     global connection_dict
     connection_dict = {}
     for slice_idx in slice_idxs:
         connection_dict[slice_idx] = {}
         connection_dict[slice_idx]["loc"] = center_dict[slice_idx]
+        # 在循环中，将center_dict这个dict的每个list添加到interaction_points中
+        interaction_points["loc"].append(center_dict[slice_idx])
         connection_dict[slice_idx]["before"] = []
         connection_dict[slice_idx]["next"] = []
         connection_dict[slice_idx]["is_bifurcation"] = False
         connection_dict[slice_idx]["number_of_next"] = 0
         connection_dict[slice_idx]["generation"] = 0
         connection_dict[slice_idx]["is_processed"] = False
-    
+
+
     def find_connection(current_label, before_label):
+        """
+        find the connection of the centerline
+        每次查找一个label的连接
+        """
         global connection_dict
         
         nearby_labels = nearby_dict[current_label]
         valid_next_labels = []
         dist_to_valid_labels = []
         processed_count = 0
+        # find the valid next labels
         for nearby_label in nearby_labels:
             if connection_dict[nearby_label]["is_processed"]==False:
                 valid_next_labels.append(nearby_label)
                 dist_to_valid_labels.append(np.sum(((np.array(connection_dict[nearby_label]["loc"])-np.array(connection_dict[current_label]["loc"]))**2)))
+                # find the distance to the current label
             else:
                 processed_count+=1
         
@@ -92,7 +129,7 @@ def get_connection_dict(center_dict, nearby_dict):
             valid_next_labels = np.array(valid_next_labels)
             dist_to_valid_labels = np.array(dist_to_valid_labels)
             sort_locs = np.argsort(dist_to_valid_labels)
-            valid_next_labels = valid_next_labels[sort_locs]
+            valid_next_labels = valid_next_labels[sort_locs] # sort the labels by the distance to the current label
         
         connection_dict[current_label]["before"].append(before_label)
         connection_dict[current_label]["is_processed"] = True
@@ -109,15 +146,22 @@ def get_connection_dict(center_dict, nearby_dict):
                     find_connection(valid_next_label, current_label)
     
     find_connection(current_label=slice_idxs[0], before_label=0)
-    
+
+    # check the connection_dict and find the bifurcation找到分叉点
     for item in connection_dict.keys():
-        assert len(connection_dict[item]["before"])<=1, (item, connection_dict[item])
-        connection_dict[item]["number_of_next"] = len(connection_dict[item]["next"])
-        connection_dict[item]["is_bifurcation"] = (connection_dict[item]["number_of_next"]>1)
+        assert len(connection_dict[item]["before"])<=1, (item, connection_dict[item]) # each label should have only one before label
+        connection_dict[item]["number_of_next"] = len(connection_dict[item]["next"]) # the number of next labels
+        #print(connection_dict[item]["number_of_next"])
+        connection_dict[item]["is_bifurcation"] = (connection_dict[item]["number_of_next"]>1) # if the label is a bifurcation分叉
         #if connection_dict[item]["is_bifurcation"]:
         #    print(connection_dict[item])
             
     def find_generation(current_label, generation):
+        """
+        find the generation of the centerline
+        每次查找一个label的generation
+        一个label的generation是其before label的generation+1
+        """
         global connection_dict
         connection_dict[current_label]["generation"]=generation
         if connection_dict[current_label]["number_of_next"]>0:
@@ -130,10 +174,20 @@ def get_connection_dict(center_dict, nearby_dict):
             return connection_dict
     
     find_generation(current_label=slice_idxs[0], generation=0)
+    # 找到最大的generation
+    number_of_generation=max(connection_dict[slice_idx]["generation"] for slice_idx in connection_dict.keys())
+
+    # for label in connection_dict.keys():
+    #     if connection_dict[label]["generation"]>number_of_generation:
+    #         number_of_generation = connection_dict[label]["generation"]
     
-    return connection_dict
+    return connection_dict, interaction_points
+    # connection_dict是函数的结果，是一个dict，包含keys "gneration", "loc", "before", "next", "is_bifurcation", "number_of_next", "is_processed"
 
 def get_number_of_branch(connection_dict):
+    """
+    根据connection_dict得到分叉数
+    """
     number_of_branch = 1
     for label in connection_dict.keys():
         if connection_dict[label]["is_bifurcation"]:
@@ -143,11 +197,15 @@ def get_number_of_branch(connection_dict):
 def get_tree_length(connection_dict, is_3d_len=True):
     global tree_length
     tree_length = 0
+    # get the start label number
     for label in connection_dict.keys():
         if connection_dict[label]["before"][0]==0:
             start_label = label
             break
     def get_tree_length_func(connection_dict, current_label):
+        """
+        计算树的长度 sqrt((x1-x2)^2+(y1-y2)^2+(z1-z2)^2)
+        """
         global tree_length
         if connection_dict[current_label]["number_of_next"]==0:
             return
